@@ -41,20 +41,13 @@ var DIFF_EQUAL = 0;
  * @param {boolean} [cleanup] Apply semantic cleanup before returning.
  * @return {Array} Array of diff tuples.
  */
-function diff_main(text1, text2, cursor_pos, cleanup, _fix_unicode) {
+function* diff_main(text1, text2, _fix_unicode) {
   // Check for equality
   if (text1 === text2) {
     if (text1) {
-      return [[DIFF_EQUAL, text1]];
+      yield [DIFF_EQUAL, text1];
     }
-    return [];
-  }
-
-  if (cursor_pos != null) {
-    var editdiff = find_cursor_edit_diff(text1, text2, cursor_pos);
-    if (editdiff) {
-      return editdiff;
-    }
+    return;
   }
 
   // Trim off common prefix (speedup).
@@ -69,21 +62,18 @@ function diff_main(text1, text2, cursor_pos, cleanup, _fix_unicode) {
   text1 = text1.substring(0, text1.length - commonlength);
   text2 = text2.substring(0, text2.length - commonlength);
 
-  // Compute the diff on the middle block.
-  var diffs = diff_compute_(text1, text2);
-
-  // Restore the prefix and suffix.
+  // Output common prefix
   if (commonprefix) {
-    diffs.unshift([DIFF_EQUAL, commonprefix]);
+    yield [DIFF_EQUAL, commonprefix];
   }
+
+  // Compute the diff on the middle block.
+  yield* diff_compute_(text1, text2);
+
+  // Output common suffix
   if (commonsuffix) {
-    diffs.push([DIFF_EQUAL, commonsuffix]);
+    yield [DIFF_EQUAL, commonsuffix];
   }
-  diff_cleanupMerge(diffs, _fix_unicode);
-  if (cleanup) {
-    diff_cleanupSemantic(diffs);
-  }
-  return diffs;
 }
 
 /**
@@ -142,8 +132,8 @@ function diff_compute_(text1, text2) {
     var text2_b = hm[3];
     var mid_common = hm[4];
     // Send both pairs off for separate processing.
-    var diffs_a = diff_main(text1_a, text2_a);
-    var diffs_b = diff_main(text1_b, text2_b);
+    var diffs_a = Array.from(diff_main(text1_a, text2_a));
+    var diffs_b = Array.from(diff_main(text1_b, text2_b));
     // Merge the results.
     return diffs_a.concat([[DIFF_EQUAL, mid_common]], diffs_b);
   }
@@ -291,8 +281,8 @@ function diff_bisectSplit_(text1, text2, x, y) {
   var text2b = text2.substring(y);
 
   // Compute both diffs serially.
-  var diffs = diff_main(text1a, text2a);
-  var diffsb = diff_main(text1b, text2b);
+  var diffs = Array.from(diff_main(text1a, text2a));
+  var diffsb = Array.from(diff_main(text1b, text2b));
 
   return diffs.concat(diffsb);
 }
@@ -1128,7 +1118,7 @@ function find_cursor_edit_diff(oldText, newText, cursor_pos) {
 function diff(text1, text2, cursor_pos, cleanup) {
   // only pass fix_unicode=true at the top level, not when diff_main is
   // recursively invoked
-  return diff_main(text1, text2, cursor_pos, cleanup, true);
+  return Array.from(diff_main(text1, text2, cleanup, true));
 }
 
 diff.INSERT = DIFF_INSERT;
