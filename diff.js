@@ -41,7 +41,7 @@ var DIFF_EQUAL = 0;
  * @param {boolean} [cleanup] Apply semantic cleanup before returning.
  * @return {Array} Array of diff tuples.
  */
-function* diff_main(text1, text2, _fix_unicode) {
+function* diff_main(text1, text2) {
   // Check for equality
   if (text1 === text2) {
     if (text1) {
@@ -83,17 +83,15 @@ function* diff_main(text1, text2, _fix_unicode) {
  * @param {string} text2 New string to be diffed.
  * @return {Array} Array of diff tuples.
  */
-function diff_compute_(text1, text2) {
-  var diffs;
-
+function* diff_compute_(text1, text2) {
   if (!text1) {
     // Just add some text (speedup).
-    return [[DIFF_INSERT, text2]];
+    return yield [DIFF_INSERT, text2];
   }
 
   if (!text2) {
     // Just delete some text (speedup).
-    return [[DIFF_DELETE, text1]];
+    return yield [DIFF_DELETE, text1];
   }
 
   var longtext = text1.length > text2.length ? text1 : text2;
@@ -101,44 +99,35 @@ function diff_compute_(text1, text2) {
   var i = longtext.indexOf(shorttext);
   if (i !== -1) {
     // Shorter text is inside the longer text (speedup).
-    diffs = [
-      [DIFF_INSERT, longtext.substring(0, i)],
+    const op = text1.length > text2.length ? DIFF_DELETE : DIFF_INSERT;
+    return yield* [
+      [op, longtext.substring(0, i)],
       [DIFF_EQUAL, shorttext],
-      [DIFF_INSERT, longtext.substring(i + shorttext.length)],
+      [op, longtext.substring(i + shorttext.length)],
     ];
-    // Swap insertions for deletions if diff is reversed.
-    if (text1.length > text2.length) {
-      diffs[0][0] = diffs[2][0] = DIFF_DELETE;
-    }
-    return diffs;
   }
 
   if (shorttext.length === 1) {
     // Single character string.
     // After the previous speedup, the character can't be an equality.
-    return [
+    return yield* [
       [DIFF_DELETE, text1],
       [DIFF_INSERT, text2],
     ];
   }
 
   // Check to see if the problem can be split in two.
-  var hm = diff_halfMatch_(text1, text2);
-  if (hm) {
-    // A half-match was found, sort out the return data.
-    var text1_a = hm[0];
-    var text1_b = hm[1];
-    var text2_a = hm[2];
-    var text2_b = hm[3];
-    var mid_common = hm[4];
-    // Send both pairs off for separate processing.
-    var diffs_a = Array.from(diff_main(text1_a, text2_a));
-    var diffs_b = Array.from(diff_main(text1_b, text2_b));
-    // Merge the results.
-    return diffs_a.concat([[DIFF_EQUAL, mid_common]], diffs_b);
+  const halfMatch = diff_halfMatch_(text1, text2);
+  if (!halfMatch) {
+    return yield* diff_bisect_(text1, text2);
   }
 
-  return diff_bisect_(text1, text2);
+  // A half-match was found, sort out the return data.
+  const [text1_a, text1_b, text2_a, text2_b, mid_common] = halfMatch;
+  // Send both pairs off for separate processing.
+  yield* diff_main(text1_a, text2_a);
+  yield [DIFF_EQUAL, mid_common];
+  yield* diff_main(text1_b, text2_b);
 }
 
 /**
@@ -150,7 +139,7 @@ function diff_compute_(text1, text2) {
  * @return {Array} Array of diff tuples.
  * @private
  */
-function diff_bisect_(text1, text2) {
+function* diff_bisect_(text1, text2) {
   // Cache the text lengths to prevent multiple calls.
   var text1_length = text1.length;
   var text2_length = text2.length;
@@ -210,7 +199,7 @@ function diff_bisect_(text1, text2) {
           var x2 = text1_length - v2[k2_offset];
           if (x1 >= x2) {
             // Overlap detected.
-            return diff_bisectSplit_(text1, text2, x1, y1);
+            return yield* diff_bisectSplit_(text1, text2, x1, y1);
           }
         }
       }
@@ -251,7 +240,7 @@ function diff_bisect_(text1, text2) {
           x2 = text1_length - x2;
           if (x1 >= x2) {
             // Overlap detected.
-            return diff_bisectSplit_(text1, text2, x1, y1);
+            return yield* diff_bisectSplit_(text1, text2, x1, y1);
           }
         }
       }
@@ -259,7 +248,7 @@ function diff_bisect_(text1, text2) {
   }
   // Diff took too long and hit the deadline or
   // number of diffs equals number of characters, no commonality at all.
-  return [
+  yield* [
     [DIFF_DELETE, text1],
     [DIFF_INSERT, text2],
   ];
@@ -274,17 +263,15 @@ function diff_bisect_(text1, text2) {
  * @param {number} y Index of split point in text2.
  * @return {Array} Array of diff tuples.
  */
-function diff_bisectSplit_(text1, text2, x, y) {
+function* diff_bisectSplit_(text1, text2, x, y) {
   var text1a = text1.substring(0, x);
   var text2a = text2.substring(0, y);
   var text1b = text1.substring(x);
   var text2b = text2.substring(y);
 
   // Compute both diffs serially.
-  var diffs = Array.from(diff_main(text1a, text2a));
-  var diffsb = Array.from(diff_main(text1b, text2b));
-
-  return diffs.concat(diffsb);
+  yield* diff_main(text1a, text2a);
+  yield* diff_main(text1b, text2b);
 }
 
 /**
@@ -1115,10 +1102,10 @@ function find_cursor_edit_diff(oldText, newText, cursor_pos) {
   return null;
 }
 
-function diff(text1, text2, cursor_pos, cleanup) {
+function diff(text1, text2) {
   // only pass fix_unicode=true at the top level, not when diff_main is
   // recursively invoked
-  return Array.from(diff_main(text1, text2, cleanup, true));
+  return Array.from(diff_main(text1, text2));
 }
 
 diff.INSERT = DIFF_INSERT;
